@@ -1,0 +1,4 @@
+Replica 3 running on port 3003
+Replica 3 initialized as FOLLOWER
+Starting election for term 2
+Replica 3 became LEADER

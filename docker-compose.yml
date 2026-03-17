@@ -1,0 +1,80 @@
+services:
+  # Main gateway that handles socket connections and routes to replicas
+  gateway:
+    build: ./gateway
+    container_name: gateway
+    environment:
+      - REPLICA_URLS=http://replica1:3001,http://replica2:3002,http://replica3:3003
+    ports:
+      - "3000:3000"
+    depends_on:
+      - replica1
+      - replica2
+      - replica3
+    restart: on-failure
+    networks:
+      - drawing-network
+
+  # First replica of the drawing board
+  replica1:
+    build: ./replica
+    container_name: replica1
+    environment:
+      - REPLICA_ID=1
+      - PORT=3001
+      - REPLICA_URLS=http://replica1:3001,http://replica2:3002,http://replica3:3003
+      - GATEWAY_URL=http://gateway:3000
+      - MY_URL=http://replica1:3001
+    ports:
+      - "3001:3001"
+    restart: on-failure
+    networks:
+      - drawing-network
+
+  # Second replica of the drawing board
+  replica2:
+    build: ./replica
+    container_name: replica2
+    environment:
+      - REPLICA_ID=2
+      - PORT=3002
+      - REPLICA_URLS=http://replica1:3001,http://replica2:3002,http://replica3:3003
+      - GATEWAY_URL=http://gateway:3000
+      - MY_URL=http://replica2:3002
+    ports:
+      - "3002:3002"
+    restart: on-failure
+    networks:
+      - drawing-network
+
+  # Third replica of the drawing board
+  replica3:
+    build: ./replica
+    container_name: replica3
+    environment:
+      - REPLICA_ID=3
+      - PORT=3003
+      - REPLICA_URLS=http://replica1:3001,http://replica2:3002,http://replica3:3003
+      - GATEWAY_URL=http://gateway:3000
+      - MY_URL=http://replica3:3003
+    ports:
+      - "3003:3003"
+    restart: on-failure
+    networks:
+      - drawing-network
+
+  # Frontend React application
+  frontend:
+    build: ./frontend
+    container_name: frontend
+    ports:
+      - "8080:3000"
+    depends_on:
+      - gateway
+    restart: on-failure
+    networks:
+      - drawing-network
+
+networks:
+  drawing-network:
+    driver: bridge
