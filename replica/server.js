@@ -5,7 +5,7 @@ const logManager = require('./logManager');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));  // changed
 
 const REPLICA_ID = process.env.REPLICA_ID || 1;
 const REPLICA_PORT = process.env.PORT || 3001;
