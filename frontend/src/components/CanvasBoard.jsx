@@ -35,8 +35,9 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom }) => {
     applyGridBackground(context, canvas.width / 2, canvas.height / 2);
 
     // Receive strokes from other users
+    // Gateway emits the raw stroke object; it may arrive as { type, data } or directly as stroke data
     socket.on('draw', (stroke) => {
-      const { data } = stroke;
+      const data = stroke.data || stroke;
       drawOnCanvas(data.x1, data.y1, data.x2, data.y2, data.color, data.width);
     });
 
