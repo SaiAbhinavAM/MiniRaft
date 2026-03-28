@@ -41,6 +41,4 @@ Thumbs.db
 ### Docker
 **/.dockerignore.bak
 
-frontend/package-lock.json
-.gitignore
-frontend/package.json
+
