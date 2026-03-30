@@ -12,7 +12,7 @@ const SideToolbar = ({ tools, activeTool, onToolChange }) => {
 
   const handleToolClick = (tool) => {
     if (tool.id === 'shapes') {
-      setShowShapesDropdown(!showShapesDropdown);
+      setShowShapesDropdown((prev) => !prev);
     } else {
       setShowShapesDropdown(false);
       onToolChange(tool.id);
@@ -20,20 +20,20 @@ const SideToolbar = ({ tools, activeTool, onToolChange }) => {
   };
 
   const shapes = [
-    { id: 'rectangle', icon: 'Square', label: 'Rectangle' },
-    { id: 'circle', icon: 'Circle', label: 'Circle' },
-    { id: 'triangle', icon: 'Triangle', label: 'Triangle' },
-    { id: 'line', icon: 'Minus', label: 'Line' },
-    { id: 'arrow', icon: 'ArrowRight', label: 'Arrow' },
+    { id: 'rectangle', icon: 'Square',     label: 'Rectangle' },
+    { id: 'circle',    icon: 'Circle',     label: 'Circle'    },
+    { id: 'triangle',  icon: 'Triangle',   label: 'Triangle'  },
+    { id: 'line',      icon: 'Minus',      label: 'Line'      },
+    { id: 'arrow',     icon: 'ArrowRight', label: 'Arrow'     },
   ];
 
   return (
     <div className="side-toolbar">
-      <motion.div 
+      <motion.div
         className="toolbar-container"
         initial={{ x: -100 }}
         animate={{ x: 0 }}
-        transition={{ type: "spring", stiffness: 100, damping: 20 }}
+        transition={{ type: 'spring', stiffness: 100, damping: 20 }}
       >
         {tools.map((tool, index) => (
           <div key={tool.id} className="tool-wrapper">

@@ -32,8 +32,10 @@ const App = () => {
 
   const handleToolChange = (toolId) => {
     setActiveTool(toolId);
-    if (toolId === 'shapes' || toolId === 'text' || toolId === 'sticky') {
+    if (toolId === 'pen' || toolId === 'eraser' || toolId === 'shapes' || toolId === 'text' || toolId === 'sticky') {
       setShowRightPanel(true);
+    } else {
+      setShowRightPanel(false);
     }
   };
 

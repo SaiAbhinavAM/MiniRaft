@@ -36,7 +36,7 @@ const TopToolbar = ({ boardName, setBoardName, zoom, setZoom, onShare }) => {
       <div className="toolbar-left">
         <div className="app-logo">
           <div className="logo-icon">🎨</div>
-          <span className="app-name">JamBoard</span>
+          <span className="app-name">MiniRaft</span>
         </div>
         
         {isEditing ? (

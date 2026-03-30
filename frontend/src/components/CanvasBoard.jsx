@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import socket from '../socket';
 
 const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom }) => {
@@ -14,70 +14,210 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom }) => {
   const [currentText, setCurrentText] = useState('');
   const textInputRef = useRef(null);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const container = containerRef.current;
-    
-    if (!canvas || !container) return;
+  // Track current tool/color/width in refs so socket handlers always have latest values
+  // without needing to be re-registered
+  const activeToolRef = useRef(activeTool);
+  const strokeColorRef = useRef(strokeColor);
+  const strokeWidthRef = useRef(strokeWidth);
+  const zoomRef = useRef(zoom);
 
-    // Save current canvas content before resizing
-    if (canvasDataRef.current === null && canvas.width > 0) {
+  useEffect(() => { activeToolRef.current = activeTool; }, [activeTool]);
+  useEffect(() => { strokeColorRef.current = strokeColor; }, [strokeColor]);
+  useEffect(() => { strokeWidthRef.current = strokeWidth; }, [strokeWidth]);
+  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+
+  // ─── Canvas drawing primitives ─────────────────────────────────────────────
+
+  const applyGridBackground = useCallback((context, width, height) => {
+    const gridSize = 20;
+    context.strokeStyle = '#f0f0f0';
+    context.lineWidth = 0.5;
+    for (let x = 0; x <= width; x += gridSize) {
+      context.beginPath();
+      context.moveTo(x, 0);
+      context.lineTo(x, height);
+      context.stroke();
+    }
+    for (let y = 0; y <= height; y += gridSize) {
+      context.beginPath();
+      context.moveTo(0, y);
+      context.lineTo(width, y);
+      context.stroke();
+    }
+  }, []);
+
+  const saveCanvasData = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (canvas && canvas.width > 0) {
       canvasDataRef.current = canvas.toDataURL();
     }
+  }, []);
 
-    // Set canvas size based on container and zoom
+  const drawOnCanvas = useCallback((x1, y1, x2, y2, color = 'black', width = 2) => {
+    if (!contextRef.current) return;
+    const ctx = contextRef.current;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.closePath();
+    saveCanvasData();
+  }, [saveCanvasData]);
+
+  const drawText = useCallback((x, y, text, color = 'black', fontSize = 16) => {
+    if (!contextRef.current || !text) return;
+    const ctx = contextRef.current;
+    ctx.fillStyle = color;
+    ctx.font = `${fontSize}px Arial`;
+    ctx.fillText(text, x, y);
+    saveCanvasData();
+  }, [saveCanvasData]);
+
+  const applyShapePath = useCallback((ctx, startX, startY, endX, endY, shapeType) => {
+    ctx.beginPath();
+    switch (shapeType) {
+      case 'rectangle':
+        ctx.rect(startX, startY, endX - startX, endY - startY);
+        break;
+      case 'circle': {
+        const radius = Math.sqrt(
+          Math.pow(endX - startX, 2) + Math.pow(endY - startY, 2)
+        );
+        ctx.arc(startX, startY, radius, 0, 2 * Math.PI);
+        break;
+      }
+      case 'triangle':
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(endX, endY);
+        ctx.lineTo(startX - (endX - startX), endY);
+        ctx.closePath();
+        break;
+      case 'line':
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(endX, endY);
+        break;
+      case 'arrow': {
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(endX, endY);
+        const angle = Math.atan2(endY - startY, endX - startX);
+        const headLength = 15;
+        ctx.moveTo(endX, endY);
+        ctx.lineTo(
+          endX - headLength * Math.cos(angle - Math.PI / 6),
+          endY - headLength * Math.sin(angle - Math.PI / 6)
+        );
+        ctx.moveTo(endX, endY);
+        ctx.lineTo(
+          endX - headLength * Math.cos(angle + Math.PI / 6),
+          endY - headLength * Math.sin(angle + Math.PI / 6)
+        );
+        break;
+      }
+      default:
+        return false;
+    }
+    return true;
+  }, []);
+
+  const drawShape = useCallback((startX, startY, endX, endY, shapeType, color = 'black', width = 2) => {
+    if (!contextRef.current) return;
+    const ctx = contextRef.current;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    const drawn = applyShapePath(ctx, startX, startY, endX, endY, shapeType);
+    if (!drawn) return;
+    ctx.stroke();
+    saveCanvasData();
+  }, [applyShapePath, saveCanvasData]);
+
+  // Preview draws on top of saved canvas snapshot — no state changes involved
+  const drawShapePreview = useCallback((startX, startY, endX, endY, shapeType, color = 'black', width = 2) => {
+    const canvas = canvasRef.current;
+    const ctx = contextRef.current;
+    if (!ctx || !canvas) return;
+
+    const savedData = canvasDataRef.current;
+    if (!savedData) return;
+
+    const img = new Image();
+    img.onload = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0);
+
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.globalAlpha = 0.7;
+      applyShapePath(ctx, startX, startY, endX, endY, shapeType);
+      ctx.stroke();
+      ctx.restore();
+    };
+    img.src = savedData;
+  }, [applyShapePath]);
+
+  // ─── Canvas initialisation / resize (only zoom drives this) ───────────────
+
+  const initCanvas = useCallback((currentZoom) => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+
+    const prevData = canvasDataRef.current;
+
     const containerRect = container.getBoundingClientRect();
-    const scale = zoom / 100;
-    
+    const scale = currentZoom / 100;
+
     canvas.width = containerRect.width * 2 * scale;
     canvas.height = containerRect.height * 2 * scale;
     canvas.style.width = `${containerRect.width * scale}px`;
     canvas.style.height = `${containerRect.height * scale}px`;
 
-    const context = canvas.getContext('2d');
-    context.scale(2, 2);
-    context.lineCap = 'round';
-    context.lineJoin = 'round';
-    context.strokeStyle = strokeColor;
-    context.lineWidth = strokeWidth;
-    contextRef.current = context;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(2, 2);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = strokeColorRef.current;
+    ctx.lineWidth = strokeWidthRef.current;
+    contextRef.current = ctx;
 
-    // Restore canvas content if it exists
-    if (canvasDataRef.current) {
+    if (prevData) {
       const img = new Image();
       img.onload = () => {
-        context.drawImage(img, 0, 0);
-        // Re-apply grid background on top
-        applyGridBackground(context, canvas.width / 2, canvas.height / 2);
+        ctx.drawImage(img, 0, 0);
+        applyGridBackground(ctx, canvas.width / 2, canvas.height / 2);
       };
-      img.src = canvasDataRef.current;
+      img.src = prevData;
     } else {
-      // Apply grid background only for initial load
-      applyGridBackground(context, canvas.width / 2, canvas.height / 2);
+      applyGridBackground(ctx, canvas.width / 2, canvas.height / 2);
     }
+  }, [applyGridBackground]);
 
-    // Receive strokes from other users
-    socket.on('draw', (data) => {
+  // Run only when zoom changes — drawing operations must NOT trigger this
+  useEffect(() => {
+    initCanvas(zoom);
+  }, [zoom]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ─── Socket listeners (registered once, use refs for latest values) ────────
+
+  useEffect(() => {
+    const handleDraw = (data) => {
       if (data.type === 'stroke') {
-        const { data: strokeData } = data;
-        drawOnCanvas(strokeData.x1, strokeData.y1, strokeData.x2, strokeData.y2, strokeData.color, strokeData.width);
+        const { data: s } = data;
+        drawOnCanvas(s.x1, s.y1, s.x2, s.y2, s.color, s.width);
       } else if (data.type === 'shape') {
-        drawShape(
-          data.startX,
-          data.startY,
-          data.endX,
-          data.endY,
-          data.shapeType,
-          data.color,
-          data.width
-        );
+        drawShape(data.startX, data.startY, data.endX, data.endY, data.shapeType, data.color, data.width);
       } else if (data.type === 'text') {
         drawText(data.x, data.y, data.text, data.color, data.fontSize);
       }
-    });
+    };
 
-    return () => socket.off('draw');
-  }, [zoom]);
+    socket.on('draw', handleDraw);
+    return () => socket.off('draw', handleDraw);
+  }, [drawOnCanvas, drawShape, drawText]);
+
+  // ─── Keep context style in sync ───────────────────────────────────────────
 
   useEffect(() => {
     if (contextRef.current) {
@@ -86,135 +226,28 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom }) => {
     }
   }, [strokeColor, strokeWidth]);
 
-  const applyGridBackground = (context, width, height) => {
-    const gridSize = 20;
-    context.strokeStyle = '#f0f0f0';
-    context.lineWidth = 0.5;
+  // ─── Mouse helpers ────────────────────────────────────────────────────────
 
-    for (let x = 0; x <= width; x += gridSize) {
-      context.beginPath();
-      context.moveTo(x, 0);
-      context.lineTo(x, height);
-      context.stroke();
-    }
-
-    for (let y = 0; y <= height; y += gridSize) {
-      context.beginPath();
-      context.moveTo(0, y);
-      context.lineTo(width, y);
-      context.stroke();
-    }
-  };
-
-  const drawOnCanvas = (x1, y1, x2, y2, color = 'black', width = 2) => {
-    if (!contextRef.current) return;
-    
-    contextRef.current.strokeStyle = color;
-    contextRef.current.lineWidth = width;
-    contextRef.current.beginPath();
-    contextRef.current.moveTo(x1, y1);
-    contextRef.current.lineTo(x2, y2);
-    contextRef.current.stroke();
-    contextRef.current.closePath();
-    
-    // Save canvas data after drawing
-    const canvas = canvasRef.current;
-    if (canvas && canvas.width > 0) {
-      canvasDataRef.current = canvas.toDataURL();
-    }
-  };
-
-  const drawText = (x, y, text, color = 'black', fontSize = 16, fontFamily = 'Arial') => {
-    if (!contextRef.current || !text) return;
-    
-    const context = contextRef.current;
-    context.fillStyle = color;
-    context.font = `${fontSize}px ${fontFamily}`;
-    context.fillText(text, x, y);
-    
-    // Save canvas data after drawing text
-    const canvas = canvasRef.current;
-    if (canvas && canvas.width > 0) {
-      canvasDataRef.current = canvas.toDataURL();
-    }
-  };
-
-  const drawShape = (startX, startY, endX, endY, shapeType, color = 'black', width = 2) => {
-    if (!contextRef.current) return;
-    
-    const context = contextRef.current;
-    context.strokeStyle = color;
-    context.lineWidth = width;
-    context.beginPath();
-
-    switch (shapeType) {
-      case 'rectangle':
-        context.rect(startX, startY, endX - startX, endY - startY);
-        break;
-      case 'circle':
-        const radius = Math.sqrt(Math.pow(endX - startX, 2) + Math.pow(endY - startY, 2));
-        context.arc(startX, startY, radius, 0, 2 * Math.PI);
-        break;
-      case 'triangle':
-        context.moveTo(startX, startY);
-        context.lineTo(endX, endY);
-        context.lineTo(startX - (endX - startX), endY);
-        context.closePath();
-        break;
-      case 'line':
-        context.moveTo(startX, startY);
-        context.lineTo(endX, endY);
-        break;
-      case 'arrow':
-        context.moveTo(startX, startY);
-        context.lineTo(endX, endY);
-        // Draw arrowhead
-        const angle = Math.atan2(endY - startY, endX - startX);
-        const headLength = 15;
-        context.moveTo(endX, endY);
-        context.lineTo(
-          endX - headLength * Math.cos(angle - Math.PI / 6),
-          endY - headLength * Math.sin(angle - Math.PI / 6)
-        );
-        context.moveTo(endX, endY);
-        context.lineTo(
-          endX - headLength * Math.cos(angle + Math.PI / 6),
-          endY - headLength * Math.sin(angle + Math.PI / 6)
-        );
-        break;
-      default:
-        return;
-    }
-    
-    context.stroke();
-    if (shapeType !== 'line' && shapeType !== 'arrow') {
-      context.closePath();
-    }
-    
-    // Save canvas data after drawing
-    const canvas = canvasRef.current;
-    if (canvas && canvas.width > 0) {
-      canvasDataRef.current = canvas.toDataURL();
-    }
-  };
-
-  const getMousePos = (e) => {
+  const getMousePos = useCallback((e) => {
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
-    
     return {
       x: (e.clientX - rect.left) * scaleX / 2,
-      y: (e.clientY - rect.top) * scaleY / 2
-    };
-  };
+      y: (e.clientY - rect.top) * scaleY / 2,
 
-  const startDrawing = (e) => {
-    const isShapeTool = ['rectangle', 'circle', 'triangle', 'line', 'arrow'].includes(activeTool);
-    const isDrawingTool = ['pen', 'eraser'].includes(activeTool);
-    const isTextTool = activeTool === 'text';
+  // ─── Drawing event handlers ───────────────────────────────────────────────
+
+  const startDrawing = useCallback((e) => {
+    // Prevent drawing when typing
+    if (isTyping) return;
     
+    const tool = activeToolRef.current;
+    const isShapeTool = ['rectangle', 'circle', 'triangle', 'line', 'arrow'].includes(tool);
+    const isDrawingTool = ['pen', 'eraser'].includes(tool);
+    const isTextTool = tool === 'text';
+
     if (isTextTool) {
       const pos = getMousePos(e.nativeEvent);
       setTextPosition(pos);
@@ -222,204 +255,133 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom }) => {
       setCurrentText('');
       return;
     }
-    
+
     if (!isShapeTool && !isDrawingTool) return;
-    
+
     const pos = getMousePos(e.nativeEvent);
     setIsDrawing(true);
-    
+
     if (isShapeTool) {
       shapeStartPos.current = pos;
-      // Save canvas state before drawing shape for preview
-      const canvas = canvasRef.current;
-      if (canvas && canvas.width > 0) {
-        canvasDataRef.current = canvas.toDataURL();
-      }
+      // Snapshot canvas before shape preview starts
+      saveCanvasData();
     } else {
       lastPos.current = pos;
     }
+  }, [getMousePos, saveCanvasData]);
 
-    // Set cursor based on tool
-    const canvas = canvasRef.current;
-    if (activeTool === 'eraser') {
-      canvas.style.cursor = 'grab';
-    } else if (isShapeTool || isTextTool) {
-      canvas.style.cursor = 'crosshair';
-    } else {
-      canvas.style.cursor = 'crosshair';
-    }
-  };
-
-  const draw = (e) => {
+  const draw = useCallback((e) => {
     if (!isDrawing) return;
-    
-    const currentPos = getMousePos(e.nativeEvent);
-    const isShapeTool = ['rectangle', 'circle', 'triangle', 'line', 'arrow'].includes(activeTool);
-    const isDrawingTool = ['pen', 'eraser'].includes(activeTool);
-    
+
+    const tool = activeToolRef.current;
+    const isShapeTool = ['rectangle', 'circle', 'triangle', 'line', 'arrow'].includes(tool);
+    const isDrawingTool = ['pen', 'eraser'].includes(tool);
+
     if (isShapeTool) {
-      // For shapes, restore canvas and draw preview
-      if (canvasDataRef.current && shapeStartPos.current) {
-        const canvas = canvasRef.current;
-        const context = contextRef.current;
-        const startPos = shapeStartPos.current; // Store reference to avoid null issues
-        
-        // Restore canvas to state before shape started
-        const img = new Image();
-        img.onload = () => {
-          // Double-check that we still have a valid start position
-          if (startPos && context && canvas) {
-            context.clearRect(0, 0, canvas.width, canvas.height);
-            context.drawImage(img, 0, 0);
-            
-            // Draw shape preview
-            drawShape(
-              startPos.x,
-              startPos.y,
-              currentPos.x,
-              currentPos.y,
-              activeTool,
-              strokeColor,
-              strokeWidth
-            );
-          }
-        };
-        img.src = canvasDataRef.current;
+      if (shapeStartPos.current) {
+        const currentPos = getMousePos(e.nativeEvent);
+        drawShapePreview(
+          shapeStartPos.current.x,
+          shapeStartPos.current.y,
+          currentPos.x,
+          currentPos.y,
+          tool,
+          strokeColorRef.current,
+          strokeWidthRef.current
+        );
       }
       return;
     }
-    
+
     if (!isDrawingTool) return;
 
+    const currentPos = getMousePos(e.nativeEvent);
     const { x: lastX, y: lastY } = lastPos.current;
 
-    let color = strokeColor;
-    let width = strokeWidth;
+    const color = tool === 'eraser' ? '#FFFFFF' : strokeColorRef.current;
+    const width = tool === 'eraser' ? strokeWidthRef.current * 3 : strokeWidthRef.current;
 
-    if (activeTool === 'eraser') {
-      color = '#FFFFFF';
-      width = strokeWidth * 3;
-    }
-
-    const strokeData = {
-      x1: lastX,
-      y1: lastY,
-      x2: currentPos.x,
-      y2: currentPos.y,
-      color: color,
-      width: width
-    };
-
-    // Draw locally
+    const strokeData = { x1: lastX, y1: lastY, x2: currentPos.x, y2: currentPos.y, color, width };
     drawOnCanvas(strokeData.x1, strokeData.y1, strokeData.x2, strokeData.y2, strokeData.color, strokeData.width);
-
-    // Send to server
     socket.emit('draw', { type: 'stroke', data: strokeData });
 
     lastPos.current = currentPos;
-  };
+  }, [isDrawing, getMousePos, drawShapePreview, drawOnCanvas]);
 
-  const stopDrawing = (e) => {
+  const stopDrawing = useCallback((e) => {
     if (!isDrawing) return;
-    
+
     setIsDrawing(false);
-    const canvas = canvasRef.current;
-    canvas.style.cursor = 'default';
-    
-    const isShapeTool = ['rectangle', 'circle', 'triangle', 'line', 'arrow'].includes(activeTool);
-    
+
+    const tool = activeToolRef.current;
+    const isShapeTool = ['rectangle', 'circle', 'triangle', 'line', 'arrow'].includes(tool);
+
     if (isShapeTool && shapeStartPos.current && e) {
-      // Get final position for shape
-      const finalPos = getMousePos(e);
-      const startPos = shapeStartPos.current; // Store reference
-      
-      // Draw the final shape
-      drawShape(
-        startPos.x,
-        startPos.y,
-        finalPos.x,
-        finalPos.y,
-        activeTool,
-        strokeColor,
-        strokeWidth
-      );
-      
-      // Send shape data to server
-      const shapeData = {
+      const finalPos = getMousePos(e.nativeEvent ?? e);
+      const startPos = shapeStartPos.current;
+
+      drawShape(startPos.x, startPos.y, finalPos.x, finalPos.y, tool, strokeColorRef.current, strokeWidthRef.current);
+
+      socket.emit('draw', {
         type: 'shape',
-        shapeType: activeTool,
+        shapeType: tool,
         startX: startPos.x,
         startY: startPos.y,
         endX: finalPos.x,
         endY: finalPos.y,
-        color: strokeColor,
-        width: strokeWidth
-      };
-      
-      socket.emit('draw', shapeData);
+        color: strokeColorRef.current,
+        width: strokeWidthRef.current,
+      });
     }
-    
-    // Save canvas data after drawing stops
-    if (canvas && canvas.width > 0) {
-      canvasDataRef.current = canvas.toDataURL();
-    }
-    
+
     shapeStartPos.current = null;
-  };
+    saveCanvasData();
+  }, [isDrawing, getMousePos, drawShape, saveCanvasData]);
 
-  const handleTextSubmit = () => {
+  // ─── Text handlers ────────────────────────────────────────────────────────
+
+  const handleTextSubmit = useCallback(() => {
     if (currentText.trim() && textPosition) {
-      const pos = textPosition; // Store reference
-      drawText(pos.x, pos.y, currentText, strokeColor, strokeWidth * 8);
-      
-      // Send text data to server
-      const textData = {
+      const fontSize = strokeWidthRef.current * 8;
+      drawText(textPosition.x, textPosition.y, currentText, strokeColorRef.current, fontSize);
+      socket.emit('draw', {
         type: 'text',
-        x: pos.x,
-        y: pos.y,
+        x: textPosition.x,
+        y: textPosition.y,
         text: currentText,
-        color: strokeColor,
-        fontSize: strokeWidth * 8
-      };
-      
-      socket.emit('draw', textData);
+        color: strokeColorRef.current,
+        fontSize,
+      });
     }
-    
     setIsTyping(false);
     setTextPosition(null);
     setCurrentText('');
-  };
+  }, [currentText, textPosition, drawText]);
 
-  const handleTextCancel = () => {
+  const handleTextCancel = useCallback(() => {
     setIsTyping(false);
     setTextPosition(null);
     setCurrentText('');
-  };
+  }, []);
 
-  const handleTextKeyDown = (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleTextSubmit();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      handleTextCancel();
-    }
-  };
+  const handleTextKeyDown = useCallback((e) => {
+    if (e.key === 'Enter') { e.preventDefault(); handleTextSubmit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); handleTextCancel(); }
+  }, [handleTextSubmit, handleTextCancel]);
+
+  // ─── Cursor ───────────────────────────────────────────────────────────────
 
   const getCursorStyle = () => {
     switch (activeTool) {
-      case 'pen':
-        return 'crosshair';
-      case 'eraser':
-        return 'grab';
-      case 'select':
-        return 'move';
-      case 'text':
-        return 'text';
-      default:
-        return 'default';
+      case 'pen': return 'crosshair';
+      case 'eraser': return 'grab';
+      case 'select': return 'move';
+      case 'text': return 'text';
+      default: return 'default';
     }
   };
+
+  // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
     <div className="canvas-container" ref={containerRef}>
@@ -432,7 +394,7 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom }) => {
         ref={canvasRef}
         style={{ cursor: getCursorStyle() }}
       />
-      
+
       {isTyping && textPosition && (
         <div
           className="text-input-overlay"
@@ -441,7 +403,7 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom }) => {
             left: textPosition.x,
             top: textPosition.y,
             zIndex: 1000,
-            transform: 'translate(-50%, -50%)'
+            transform: 'translate(-50%, -50%)',
           }}
         >
           <input
@@ -463,15 +425,13 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom }) => {
               color: strokeColor,
               backgroundColor: 'white',
               minWidth: '200px',
-              outline: 'none'
+              outline: 'none',
             }}
           />
-          <div className="text-input-hint" style={{
-            fontSize: '12px',
-            color: '#666',
-            marginTop: '4px',
-            textAlign: 'center'
-          }}>
+          <div
+            className="text-input-hint"
+            style={{ fontSize: '12px', color: '#666', marginTop: '4px', textAlign: 'center' }}
+          >
             Press Enter to submit, Escape to cancel
           </div>
         </div>
