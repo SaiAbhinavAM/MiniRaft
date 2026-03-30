@@ -7,13 +7,14 @@ const leaderManager = require('./leaderManager');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));  // changed
 
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
     origin: '*',
   },
+  maxHttpBufferSize: 10e6,  // added
 });
 
 // Import routes and pass Socket.IO instance

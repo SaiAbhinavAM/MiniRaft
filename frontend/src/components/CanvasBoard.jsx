@@ -124,6 +124,21 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom }) => {
     }
   };
 
+  const drawText = (x, y, text, color = 'black', fontSize = 16, fontFamily = 'Arial') => {
+    if (!contextRef.current || !text) return;
+    
+    const context = contextRef.current;
+    context.fillStyle = color;
+    context.font = `${fontSize}px ${fontFamily}`;
+    context.fillText(text, x, y);
+    
+    // Save canvas data after drawing text
+    const canvas = canvasRef.current;
+    if (canvas && canvas.width > 0) {
+      canvasDataRef.current = canvas.toDataURL();
+    }
+  };
+
   const drawShape = (startX, startY, endX, endY, shapeType, color = 'black', width = 2) => {
     if (!contextRef.current) return;
     
@@ -177,21 +192,6 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom }) => {
     }
     
     // Save canvas data after drawing
-    const canvas = canvasRef.current;
-    if (canvas && canvas.width > 0) {
-      canvasDataRef.current = canvas.toDataURL();
-    }
-  };
-
-  const drawText = (x, y, text, color = 'black', fontSize = 16, fontFamily = 'Arial') => {
-    if (!contextRef.current || !text) return;
-    
-    const context = contextRef.current;
-    context.fillStyle = color;
-    context.font = `${fontSize}px ${fontFamily}`;
-    context.fillText(text, x, y);
-    
-    // Save canvas data after drawing text
     const canvas = canvasRef.current;
     if (canvas && canvas.width > 0) {
       canvasDataRef.current = canvas.toDataURL();
