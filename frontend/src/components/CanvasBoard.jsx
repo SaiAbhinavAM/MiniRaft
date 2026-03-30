@@ -1,21 +1,38 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import socket from '../socket';
 
+// Text object structure
+const createTextObject = (x, y, text = '', width = 200, height = 40) => ({
+  id: `text-${Date.now()}-${Math.random()}`,
+  x,
+  y,
+  text,
+  width,
+  height,
+  fontSize: 16,
+  color: '#000000',
+  isEditing: false,
+  isSelected: false,
+});
+
 const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom }) => {
   const canvasRef = useRef(null);
-  const [isDrawing, setIsDrawing] = useState(false);
-  const contextRef = useRef(null);
-  const lastPos = useRef({ x: 0, y: 0 });
   const containerRef = useRef(null);
+  const contextRef = useRef(null);
   const canvasDataRef = useRef(null);
   const shapeStartPos = useRef(null);
-  const [isTyping, setIsTyping] = useState(false);
-  const [textPosition, setTextPosition] = useState(null);
-  const [currentText, setCurrentText] = useState('');
-  const textInputRef = useRef(null);
+  const lastPos = useRef({ x: 0, y: 0 });
 
-  // Track current tool/color/width in refs so socket handlers always have latest values
-  // without needing to be re-registered
+  // State management
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [textObjects, setTextObjects] = useState([]);
+  const [selectedTextId, setSelectedTextId] = useState(null);
+  const [isDraggingText, setIsDraggingText] = useState(false);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [isResizingText, setIsResizingText] = useState(false);
+  const [resizeHandle, setResizeHandle] = useState('');
+
+  // Refs for latest values
   const activeToolRef = useRef(activeTool);
   const strokeColorRef = useRef(strokeColor);
   const strokeWidthRef = useRef(strokeWidth);
@@ -66,12 +83,31 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom }) => {
     saveCanvasData();
   }, [saveCanvasData]);
 
-  const drawText = useCallback((x, y, text, color = 'black', fontSize = 16) => {
-    if (!contextRef.current || !text) return;
+  const drawText = useCallback((textObj) => {
+    if (!contextRef.current || !textObj.text) return;
     const ctx = contextRef.current;
-    ctx.fillStyle = color;
-    ctx.font = `${fontSize}px Arial`;
-    ctx.fillText(text, x, y);
+    ctx.fillStyle = textObj.color;
+    ctx.font = `${textObj.fontSize}px Arial`;
+    
+    // Wrap text if needed
+    const words = textObj.text.split(' ');
+    let line = '';
+    let y = textObj.y + textObj.fontSize;
+    
+    for (let word of words) {
+      const testLine = line + word + ' ';
+      const metrics = ctx.measureText(testLine);
+      const testWidth = metrics.width;
+      
+      if (testWidth > textObj.width && line !== '') {
+        ctx.fillText(line, textObj.x, y);
+        line = word + ' ';
+        y += textObj.fontSize * 1.2;
+      } else {
+        line = testLine;
+      }
+    }
+    ctx.fillText(line, textObj.x, y);
     saveCanvasData();
   }, [saveCanvasData]);
 
@@ -132,74 +168,61 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom }) => {
     saveCanvasData();
   }, [applyShapePath, saveCanvasData]);
 
-  // Preview draws on top of saved canvas snapshot — no state changes involved
-  const drawShapePreview = useCallback((startX, startY, endX, endY, shapeType, color = 'black', width = 2) => {
-    const canvas = canvasRef.current;
-    const ctx = contextRef.current;
-    if (!ctx || !canvas) return;
+  // ─── Canvas initialization (only once on mount) ───────────────────────────────
 
-    const savedData = canvasDataRef.current;
-    if (!savedData) return;
-
-    const img = new Image();
-    img.onload = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0);
-
-      ctx.save();
-      ctx.strokeStyle = color;
-      ctx.lineWidth = width;
-      ctx.globalAlpha = 0.7;
-      applyShapePath(ctx, startX, startY, endX, endY, shapeType);
-      ctx.stroke();
-      ctx.restore();
-    };
-    img.src = savedData;
-  }, [applyShapePath]);
-
-  // ─── Canvas initialisation / resize (only zoom drives this) ───────────────
-
-  const initCanvas = useCallback((currentZoom) => {
+  const initCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
     if (!canvas || !container) return;
 
-    const prevData = canvasDataRef.current;
-
     const containerRect = container.getBoundingClientRect();
-    const scale = currentZoom / 100;
+    const scale = zoomRef.current / 100;
 
-    canvas.width = containerRect.width * 2 * scale;
-    canvas.height = containerRect.height * 2 * scale;
-    canvas.style.width = `${containerRect.width * scale}px`;
-    canvas.style.height = `${containerRect.height * scale}px`;
+    // Set canvas resolution (higher for crisp rendering)
+    canvas.width = containerRect.width * 2;
+    canvas.height = containerRect.height * 2;
+    
+    // Set display size with zoom
+    canvas.style.width = `${containerRect.width}px`;
+    canvas.style.height = `${containerRect.height}px`;
 
     const ctx = canvas.getContext('2d');
-    ctx.scale(2, 2);
+    ctx.scale(2, 2); // For crisp rendering
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.strokeStyle = strokeColorRef.current;
     ctx.lineWidth = strokeWidthRef.current;
     contextRef.current = ctx;
 
-    if (prevData) {
-      const img = new Image();
-      img.onload = () => {
-        ctx.drawImage(img, 0, 0);
-        applyGridBackground(ctx, canvas.width / 2, canvas.height / 2);
-      };
-      img.src = prevData;
-    } else {
-      applyGridBackground(ctx, canvas.width / 2, canvas.height / 2);
-    }
+    applyGridBackground(ctx, canvas.width / 2, canvas.height / 2);
   }, [applyGridBackground]);
 
-  // Run only when zoom changes — drawing operations must NOT trigger this
+  // Initialize canvas only once
   useEffect(() => {
-    initCanvas(zoom);
-  }, [zoom]); // eslint-disable-line react-hooks/exhaustive-deps
+    initCanvas();
+  }, [initCanvas]);
 
-  // ─── Socket listeners (registered once, use refs for latest values) ────────
+  // Handle zoom changes without reinitializing canvas
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+
+    const containerRect = container.getBoundingClientRect();
+    const scale = zoom / 100;
+
+    // Only change display size, not canvas resolution
+    canvas.style.width = `${containerRect.width * scale}px`;
+    canvas.style.height = `${containerRect.height * scale}px`;
+    
+    // Update context properties
+    if (contextRef.current) {
+      contextRef.current.strokeStyle = strokeColor;
+      contextRef.current.lineWidth = strokeWidth;
+    }
+  }, [zoom, strokeColor, strokeWidth]);
+
+  // ─── Socket listeners ────────────────────────────────────────────────────────
 
   useEffect(() => {
     const handleDraw = (data) => {
@@ -209,22 +232,13 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom }) => {
       } else if (data.type === 'shape') {
         drawShape(data.startX, data.startY, data.endX, data.endY, data.shapeType, data.color, data.width);
       } else if (data.type === 'text') {
-        drawText(data.x, data.y, data.text, data.color, data.fontSize);
+        drawText(data.textObj);
       }
     };
 
     socket.on('draw', handleDraw);
     return () => socket.off('draw', handleDraw);
   }, [drawOnCanvas, drawShape, drawText]);
-
-  // ─── Keep context style in sync ───────────────────────────────────────────
-
-  useEffect(() => {
-    if (contextRef.current) {
-      contextRef.current.strokeStyle = strokeColor;
-      contextRef.current.lineWidth = strokeWidth;
-    }
-  }, [strokeColor, strokeWidth]);
 
   // ─── Mouse helpers ────────────────────────────────────────────────────────
 
@@ -236,79 +250,102 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom }) => {
     return {
       x: (e.clientX - rect.left) * scaleX / 2,
       y: (e.clientY - rect.top) * scaleY / 2,
+    };
+  }, []);
+
+  const getScreenPos = useCallback((canvasX, canvasY) => {
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = rect.width / canvas.width;
+    const scaleY = rect.height / canvas.height;
+    return {
+      x: canvasX * scaleX * 2,
+      y: canvasY * scaleY * 2,
+    };
+  }, []);
+
+  // ─── Text object management ─────────────────────────────────────────────────
+
+  const addTextObject = useCallback((x, y) => {
+    const newTextObj = createTextObject(x, y);
+    setTextObjects(prev => [...prev, newTextObj]);
+    setSelectedTextId(newTextObj.id);
+    
+    // Emit to socket
+    socket.emit('draw', {
+      type: 'text',
+      textObj: newTextObj,
+    });
+  }, []);
+
+  const updateTextObject = useCallback((id, updates) => {
+    setTextObjects(prev => prev.map(obj => 
+      obj.id === id ? { ...obj, ...updates } : obj
+    ));
+  }, []);
+
+  const deleteTextObject = useCallback((id) => {
+    setTextObjects(prev => prev.filter(obj => obj.id !== id));
+    setSelectedTextId(null);
+  }, []);
 
   // ─── Drawing event handlers ───────────────────────────────────────────────
 
-  const startDrawing = useCallback((e) => {
-    // Prevent drawing when typing
-    if (isTyping) return;
-    
+  const handleMouseDown = useCallback((e) => {
     const tool = activeToolRef.current;
-    const isShapeTool = ['rectangle', 'circle', 'triangle', 'line', 'arrow'].includes(tool);
-    const isDrawingTool = ['pen', 'eraser'].includes(tool);
-    const isTextTool = tool === 'text';
+    const pos = getMousePos(e);
 
-    if (isTextTool) {
-      const pos = getMousePos(e.nativeEvent);
-      setTextPosition(pos);
-      setIsTyping(true);
-      setCurrentText('');
+    if (tool === 'text') {
+      addTextObject(pos.x, pos.y);
       return;
     }
 
+    const isShapeTool = ['rectangle', 'circle', 'triangle', 'line', 'arrow'].includes(tool);
+    const isDrawingTool = ['pen', 'eraser'].includes(tool);
+
     if (!isShapeTool && !isDrawingTool) return;
 
-    const pos = getMousePos(e.nativeEvent);
     setIsDrawing(true);
 
     if (isShapeTool) {
       shapeStartPos.current = pos;
-      // Snapshot canvas before shape preview starts
       saveCanvasData();
     } else {
       lastPos.current = pos;
     }
-  }, [getMousePos, saveCanvasData]);
+  }, [getMousePos, addTextObject, saveCanvasData]);
 
-  const draw = useCallback((e) => {
+  const handleMouseMove = useCallback((e) => {
     if (!isDrawing) return;
 
     const tool = activeToolRef.current;
     const isShapeTool = ['rectangle', 'circle', 'triangle', 'line', 'arrow'].includes(tool);
     const isDrawingTool = ['pen', 'eraser'].includes(tool);
 
-    if (isShapeTool) {
-      if (shapeStartPos.current) {
-        const currentPos = getMousePos(e.nativeEvent);
-        drawShapePreview(
-          shapeStartPos.current.x,
-          shapeStartPos.current.y,
-          currentPos.x,
-          currentPos.y,
-          tool,
-          strokeColorRef.current,
-          strokeWidthRef.current
-        );
-      }
+    if (isShapeTool && shapeStartPos.current) {
+      const currentPos = getMousePos(e);
+      // Preview shape (implementation would go here)
       return;
     }
 
     if (!isDrawingTool) return;
 
-    const currentPos = getMousePos(e.nativeEvent);
+    const currentPos = getMousePos(e);
     const { x: lastX, y: lastY } = lastPos.current;
 
     const color = tool === 'eraser' ? '#FFFFFF' : strokeColorRef.current;
     const width = tool === 'eraser' ? strokeWidthRef.current * 3 : strokeWidthRef.current;
 
-    const strokeData = { x1: lastX, y1: lastY, x2: currentPos.x, y2: currentPos.y, color, width };
-    drawOnCanvas(strokeData.x1, strokeData.y1, strokeData.x2, strokeData.y2, strokeData.color, strokeData.width);
-    socket.emit('draw', { type: 'stroke', data: strokeData });
+    drawOnCanvas(lastX, lastY, currentPos.x, currentPos.y, color, width);
+    socket.emit('draw', { 
+      type: 'stroke', 
+      data: { x1: lastX, y1: lastY, x2: currentPos.x, y2: currentPos.y, color, width }
+    });
 
     lastPos.current = currentPos;
-  }, [isDrawing, getMousePos, drawShapePreview, drawOnCanvas]);
+  }, [isDrawing, getMousePos, drawOnCanvas]);
 
-  const stopDrawing = useCallback((e) => {
+  const handleMouseUp = useCallback((e) => {
     if (!isDrawing) return;
 
     setIsDrawing(false);
@@ -316,8 +353,8 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom }) => {
     const tool = activeToolRef.current;
     const isShapeTool = ['rectangle', 'circle', 'triangle', 'line', 'arrow'].includes(tool);
 
-    if (isShapeTool && shapeStartPos.current && e) {
-      const finalPos = getMousePos(e.nativeEvent ?? e);
+    if (isShapeTool && shapeStartPos.current) {
+      const finalPos = getMousePos(e);
       const startPos = shapeStartPos.current;
 
       drawShape(startPos.x, startPos.y, finalPos.x, finalPos.y, tool, strokeColorRef.current, strokeWidthRef.current);
@@ -338,38 +375,27 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom }) => {
     saveCanvasData();
   }, [isDrawing, getMousePos, drawShape, saveCanvasData]);
 
-  // ─── Text handlers ────────────────────────────────────────────────────────
+  // ─── Text interaction handlers ───────────────────────────────────────────────
 
-  const handleTextSubmit = useCallback(() => {
-    if (currentText.trim() && textPosition) {
-      const fontSize = strokeWidthRef.current * 8;
-      drawText(textPosition.x, textPosition.y, currentText, strokeColorRef.current, fontSize);
-      socket.emit('draw', {
-        type: 'text',
-        x: textPosition.x,
-        y: textPosition.y,
-        text: currentText,
-        color: strokeColorRef.current,
-        fontSize,
-      });
-    }
-    setIsTyping(false);
-    setTextPosition(null);
-    setCurrentText('');
-  }, [currentText, textPosition, drawText]);
-
-  const handleTextCancel = useCallback(() => {
-    setIsTyping(false);
-    setTextPosition(null);
-    setCurrentText('');
+  const handleTextClick = useCallback((textObj, e) => {
+    e.stopPropagation();
+    setSelectedTextId(textObj.id);
   }, []);
 
-  const handleTextKeyDown = useCallback((e) => {
-    if (e.key === 'Enter') { e.preventDefault(); handleTextSubmit(); }
-    else if (e.key === 'Escape') { e.preventDefault(); handleTextCancel(); }
-  }, [handleTextSubmit, handleTextCancel]);
+  const handleTextDoubleClick = useCallback((textObj, e) => {
+    e.stopPropagation();
+    updateTextObject(textObj.id, { isEditing: true });
+  }, [updateTextObject]);
 
-  // ─── Cursor ───────────────────────────────────────────────────────────────
+  const handleTextChange = useCallback((textObj, value) => {
+    updateTextObject(textObj.id, { text: value });
+  }, [updateTextObject]);
+
+  const handleTextBlur = useCallback((textObj) => {
+    updateTextObject(textObj.id, { isEditing: false });
+  }, [updateTextObject]);
+
+  // ─── Cursor style ───────────────────────────────────────────────────────────
 
   const getCursorStyle = () => {
     switch (activeTool) {
@@ -387,55 +413,83 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom }) => {
     <div className="canvas-container" ref={containerRef}>
       <canvas
         className="drawing-canvas"
-        onMouseDown={startDrawing}
-        onMouseMove={draw}
-        onMouseUp={stopDrawing}
-        onMouseLeave={stopDrawing}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
         ref={canvasRef}
         style={{ cursor: getCursorStyle() }}
       />
 
-      {isTyping && textPosition && (
-        <div
-          className="text-input-overlay"
-          style={{
-            position: 'absolute',
-            left: textPosition.x,
-            top: textPosition.y,
-            zIndex: 1000,
-            transform: 'translate(-50%, -50%)',
-          }}
-        >
-          <input
-            ref={textInputRef}
-            type="text"
-            value={currentText}
-            onChange={(e) => setCurrentText(e.target.value)}
-            onKeyDown={handleTextKeyDown}
-            onBlur={handleTextSubmit}
-            className="text-input"
-            placeholder="Type text..."
-            autoFocus
-            style={{
-              padding: '4px 8px',
-              border: '2px solid #1a73e8',
-              borderRadius: '4px',
-              fontSize: `${strokeWidth * 8}px`,
-              fontFamily: 'Arial',
-              color: strokeColor,
-              backgroundColor: 'white',
-              minWidth: '200px',
-              outline: 'none',
-            }}
-          />
+      {/* Render text objects */}
+      {textObjects.map(textObj => {
+        const screenPos = getScreenPos(textObj.x, textObj.y);
+        const isSelected = selectedTextId === textObj.id;
+        
+        return (
           <div
-            className="text-input-hint"
-            style={{ fontSize: '12px', color: '#666', marginTop: '4px', textAlign: 'center' }}
+            key={textObj.id}
+            className={`text-object ${isSelected ? 'selected' : ''}`}
+            style={{
+              position: 'absolute',
+              left: screenPos.x,
+              top: screenPos.y,
+              width: textObj.width,
+              height: textObj.height,
+              border: isSelected ? '2px solid #1a73e8' : '1px solid transparent',
+              borderRadius: '4px',
+              padding: '4px',
+              cursor: textObj.isEditing ? 'text' : 'move',
+              backgroundColor: textObj.isEditing ? 'white' : 'transparent',
+              zIndex: isSelected ? 1000 : 1,
+            }}
+            onClick={(e) => handleTextClick(textObj, e)}
+            onDoubleClick={(e) => handleTextDoubleClick(textObj, e)}
           >
-            Press Enter to submit, Escape to cancel
+            {textObj.isEditing ? (
+              <textarea
+                value={textObj.text}
+                onChange={(e) => handleTextChange(textObj, e.target.value)}
+                onBlur={() => handleTextBlur(textObj)}
+                autoFocus
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  border: 'none',
+                  outline: 'none',
+                  resize: 'none',
+                  fontSize: `${textObj.fontSize}px`,
+                  fontFamily: 'Arial',
+                  color: textObj.color,
+                  backgroundColor: 'transparent',
+                }}
+              />
+            ) : (
+              <div
+                style={{
+                  fontSize: `${textObj.fontSize}px`,
+                  fontFamily: 'Arial',
+                  color: textObj.color,
+                  whiteSpace: 'pre-wrap',
+                  wordWrap: 'break-word',
+                }}
+              >
+                {textObj.text || 'Click to edit'}
+              </div>
+            )}
+            
+            {/* Resize handles */}
+            {isSelected && !textObj.isEditing && (
+              <>
+                <div className="resize-handle top-left" style={{ position: 'absolute', top: -4, left: -4, width: 8, height: 8, backgroundColor: '#1a73e8', cursor: 'nw-resize' }} />
+                <div className="resize-handle top-right" style={{ position: 'absolute', top: -4, right: -4, width: 8, height: 8, backgroundColor: '#1a73e8', cursor: 'ne-resize' }} />
+                <div className="resize-handle bottom-left" style={{ position: 'absolute', bottom: -4, left: -4, width: 8, height: 8, backgroundColor: '#1a73e8', cursor: 'sw-resize' }} />
+                <div className="resize-handle bottom-right" style={{ position: 'absolute', bottom: -4, right: -4, width: 8, height: 8, backgroundColor: '#1a73e8', cursor: 'se-resize' }} />
+              </>
+            )}
           </div>
-        </div>
-      )}
+        );
+      })}
     </div>
   );
 };

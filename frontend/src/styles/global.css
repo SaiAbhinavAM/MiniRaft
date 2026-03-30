@@ -640,6 +640,34 @@ body {
   background-color: #f8f9fa;
 }
 
+/* Text Objects */
+.text-object {
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.text-object:hover {
+  border-color: #e0e0e0 !important;
+}
+
+.text-object.selected {
+  box-shadow: 0 2px 8px rgba(26, 115, 232, 0.2);
+}
+
+.text-object.selected .resize-handle {
+  opacity: 1;
+}
+
+.resize-handle {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  border-radius: 50%;
+}
+
+.resize-handle:hover {
+  transform: scale(1.2);
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
   .toolbar-left {
