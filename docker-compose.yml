@@ -89,6 +89,8 @@ services:
   frontend:
     build: ./frontend
     container_name: frontend
+    environment:
+      - REACT_APP_GATEWAY_URL=http://172.22.246.81:3000
     ports:
       - "8080:3000"
     depends_on:
