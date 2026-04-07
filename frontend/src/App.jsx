@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import TopToolbar from './components/TopToolbar';
 import SideToolbar from './components/SideToolbar';
 import CanvasBoard from './components/CanvasBoard';
@@ -20,6 +20,9 @@ const App = () => {
   const [strokeWidth, setStrokeWidth] = useState(2);
   const [zoom, setZoom] = useState(100);
 
+  // Ref passed to CanvasBoard so TopToolbar can trigger undo/redo
+  const historyRef = useRef(null);
+
   const tools = [
     { id: 'select', icon: 'MousePointer', label: 'Select' },
     { id: 'pen', icon: 'Pen', label: 'Pen' },
@@ -32,7 +35,7 @@ const App = () => {
 
   const handleToolChange = (toolId) => {
     setActiveTool(toolId);
-    if (toolId === 'pen' || toolId === 'eraser' || toolId === 'shapes' || toolId === 'text' || toolId === 'sticky') {
+    if (['pen', 'eraser', 'shapes', 'text', 'sticky'].includes(toolId)) {
       setShowRightPanel(true);
     } else {
       setShowRightPanel(false);
@@ -57,24 +60,27 @@ const App = () => {
         zoom={zoom}
         setZoom={setZoom}
         onShare={() => console.log('Share clicked')}
+        onUndo={() => historyRef.current?.undo()}
+        onRedo={() => historyRef.current?.redo()}
       />
-      
+
       <div className="main-content">
         <SideToolbar
           tools={tools}
           activeTool={activeTool}
           onToolChange={handleToolChange}
         />
-        
+
         <div className="canvas-area">
           <CanvasBoard
             activeTool={activeTool}
             strokeColor={strokeColor}
             strokeWidth={strokeWidth}
             zoom={zoom}
+            historyRef={historyRef}
           />
         </div>
-        
+
         {showRightPanel && (
           <RightPanel
             activeTool={activeTool}
@@ -86,7 +92,7 @@ const App = () => {
           />
         )}
       </div>
-      
+
       <FrameCarousel
         frames={frames}
         activeFrame={activeFrame}

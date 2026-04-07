@@ -1,14 +1,11 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { 
-  Undo, 
-  Redo, 
   ZoomIn, 
   ZoomOut, 
   Share2, 
   User,
-  Maximize2,
-  Minimize2
+  Maximize2
 } from 'lucide-react';
 
 const TopToolbar = ({ boardName, setBoardName, zoom, setZoom, onShare }) => {
@@ -86,15 +83,6 @@ const TopToolbar = ({ boardName, setBoardName, zoom, setZoom, onShare }) => {
             title="Reset Zoom"
           >
             <Maximize2 size={16} />
-          </button>
-        </div>
-
-        <div className="history-controls">
-          <button className="history-btn" title="Undo (Ctrl + Z)">
-            <Undo size={18} />
-          </button>
-          <button className="history-btn" title="Redo (Ctrl + Y)">
-            <Redo size={18} />
           </button>
         </div>
       </div>
