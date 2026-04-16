@@ -1,5 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { AnimatePresence } from 'framer-motion';
 import socket from '../socket';
+import StickyNote, { STICKY_COLORS } from './StickyNote';
+import { Plus } from 'lucide-react';
 
 const createTextObject = (x, y, text = '', width = 200, height = 40) => ({
   id: `text-${Date.now()}-${Math.random()}`,
@@ -20,6 +23,10 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom, historyRef })
   const [isDrawing, setIsDrawing] = useState(false);
   const [textObjects, setTextObjects] = useState([]);
   const [selectedTextId, setSelectedTextId] = useState(null);
+
+  // ── Sticky Notes ─────────────────────────────────────────────────────────
+  const [stickyNotes, setStickyNotes] = useState([]);
+  const [selectedStickyId, setSelectedStickyId] = useState(null);
 
   const activeToolRef = useRef(activeTool);
   const strokeColorRef = useRef(strokeColor);
@@ -205,6 +212,15 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom, historyRef })
         drawShape(data.startX, data.startY, data.endX, data.endY, data.shapeType, data.color, data.width);
       } else if (data.type === 'text') {
         drawText(data.textObj);
+      } else if (data.type === 'sticky-add') {
+        setStickyNotes(prev => {
+          if (prev.find(n => n.id === data.note.id)) return prev;
+          return [...prev, data.note];
+        });
+      } else if (data.type === 'sticky-update') {
+        setStickyNotes(prev => prev.map(n => n.id === data.id ? { ...n, ...data.updates } : n));
+      } else if (data.type === 'sticky-delete') {
+        setStickyNotes(prev => prev.filter(n => n.id !== data.id));
       }
     };
     socket.on('draw', handleDraw);
@@ -244,12 +260,52 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom, historyRef })
     setTextObjects(prev => prev.map(o => o.id === id ? { ...o, ...updates } : o));
   }, []);
 
+  // ─── Sticky Notes helpers ─────────────────────────────────────────────────
+
+  const createStickyNote = useCallback((x, y) => {
+    const colorNames = STICKY_COLORS.map(c => c.name);
+    const note = {
+      id: `sticky-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      x, y,
+      width: 220, height: 200,
+      text: '',
+      color: colorNames[Math.floor(Math.random() * colorNames.length)],
+    };
+    setStickyNotes(prev => [...prev, note]);
+    setSelectedStickyId(note.id);
+    socket.emit('draw', { type: 'sticky-add', note });
+  }, []);
+
+  const updateStickyNote = useCallback((id, updates) => {
+    setStickyNotes(prev => prev.map(n => n.id === id ? { ...n, ...updates } : n));
+    socket.emit('draw', { type: 'sticky-update', id, updates });
+  }, []);
+
+  const deleteStickyNote = useCallback((id) => {
+    setStickyNotes(prev => prev.filter(n => n.id !== id));
+    if (selectedStickyId === id) setSelectedStickyId(null);
+    socket.emit('draw', { type: 'sticky-delete', id });
+  }, [selectedStickyId]);
+
+  const addStickyFromButton = useCallback(() => {
+    createStickyNote(120 + Math.random() * 300, 80 + Math.random() * 200);
+  }, [createStickyNote]);
+
   // ─── Mouse events ──────────────────────────────────────────────────────────
 
   const handleMouseDown = useCallback((e) => {
     const tool = activeToolRef.current;
     const pos = getMousePos(e);
     if (tool === 'text') { addTextObject(pos.x, pos.y); return; }
+    if (tool === 'sticky') {
+      // Convert canvas coords to screen-relative coords for sticky notes
+      const canvas = canvasRef.current;
+      const rect = canvas.getBoundingClientRect();
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      createStickyNote(sx - 110, sy - 20);
+      return;
+    }
     const isShape = ['rectangle','circle','triangle','line','arrow'].includes(tool);
     const isDraw = ['pen','eraser'].includes(tool);
     if (!isShape && !isDraw) return;
@@ -257,7 +313,7 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom, historyRef })
     setIsDrawing(true);
     if (isShape) { shapeStartPos.current = pos; saveCanvasData(); }
     else { lastPos.current = pos; }
-  }, [getMousePos, addTextObject, saveCanvasData, pushToHistory]);
+  }, [getMousePos, addTextObject, createStickyNote, saveCanvasData, pushToHistory]);
 
   const handleMouseMove = useCallback((e) => {
     if (!isDrawing) return;
@@ -292,6 +348,7 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom, historyRef })
       case 'eraser': return 'grab';
       case 'select': return 'move';
       case 'text': return 'text';
+      case 'sticky': return 'copy';
       default: return 'default';
     }
   };
@@ -309,6 +366,8 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom, historyRef })
         ref={canvasRef}
         style={{ cursor: getCursorStyle() }}
       />
+
+      {/* Text objects */}
       {textObjects.map(textObj => {
         const sp = getScreenPos(textObj.x, textObj.y);
         const isSel = selectedTextId === textObj.id;
@@ -347,6 +406,31 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom, historyRef })
           </div>
         );
       })}
+
+      {/* Sticky Notes */}
+      <AnimatePresence>
+        {stickyNotes.map(note => (
+          <StickyNote
+            key={note.id}
+            note={note}
+            isSelected={selectedStickyId === note.id}
+            onSelect={setSelectedStickyId}
+            onUpdate={updateStickyNote}
+            onDelete={deleteStickyNote}
+          />
+        ))}
+      </AnimatePresence>
+
+      {/* Floating "+" button when sticky tool is active */}
+      {activeTool === 'sticky' && (
+        <button
+          className="sticky-add-fab"
+          onClick={addStickyFromButton}
+          title="Add sticky note"
+        >
+          <Plus size={22} />
+        </button>
+      )}
     </div>
   );
 };

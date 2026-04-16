@@ -668,6 +668,120 @@ body {
   transform: scale(1.2);
 }
 
+/* ─── Sticky Notes ───────────────────────────────────────────────────── */
+
+.sticky-note {
+  transition: box-shadow 0.2s ease;
+}
+
+.sticky-note:hover {
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.15);
+}
+
+.sticky-note--selected {
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18) !important;
+}
+
+.sticky-note__header {
+  flex-shrink: 0;
+}
+
+.sticky-note__icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: rgba(255, 255, 255, 0.45);
+  border-radius: 5px;
+  cursor: pointer;
+  color: rgba(0, 0, 0, 0.55);
+  transition: all 0.15s;
+}
+
+.sticky-note__icon-btn:hover {
+  background: rgba(255, 255, 255, 0.8);
+  color: #d32f2f;
+  transform: scale(1.1);
+}
+
+.sticky-note__color-picker {
+  display: flex;
+  gap: 5px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.7);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  flex-shrink: 0;
+}
+
+.sticky-note__color-swatch {
+  width: 22px;
+  height: 22px;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.sticky-note__color-swatch:hover {
+  transform: scale(1.2);
+}
+
+.sticky-note__color-swatch.active {
+  border-width: 3px;
+  transform: scale(1.15);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1);
+}
+
+.sticky-note__textarea {
+  scrollbar-width: thin;
+}
+
+.sticky-note__textarea::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sticky-note__textarea::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 2px;
+}
+
+.sticky-note__resize-handle {
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.sticky-note:hover .sticky-note__resize-handle,
+.sticky-note--selected .sticky-note__resize-handle {
+  opacity: 1;
+}
+
+/* Floating Add Button */
+.sticky-add-fab {
+  position: absolute;
+  bottom: 24px;
+  right: 24px;
+  width: 48px;
+  height: 48px;
+  border: none;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #F9E547, #FFB74D);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(249, 229, 71, 0.4);
+  transition: all 0.25s;
+  z-index: 3000;
+}
+
+.sticky-add-fab:hover {
+  transform: scale(1.12) rotate(90deg);
+  box-shadow: 0 6px 24px rgba(249, 229, 71, 0.55);
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
   .toolbar-left {
