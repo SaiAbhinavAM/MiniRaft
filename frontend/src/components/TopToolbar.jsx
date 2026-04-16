@@ -4,8 +4,7 @@ import {
   ZoomIn, 
   ZoomOut, 
   Share2, 
-  User,
-  Maximize2
+  User
 } from 'lucide-react';
 
 const TopToolbar = ({ boardName, setBoardName, zoom, setZoom, onShare }) => {
@@ -75,14 +74,6 @@ const TopToolbar = ({ boardName, setBoardName, zoom, setZoom, onShare }) => {
             title="Zoom In (Ctrl +)"
           >
             <ZoomIn size={18} />
-          </button>
-          
-          <button 
-            onClick={handleResetZoom}
-            className="zoom-btn"
-            title="Reset Zoom"
-          >
-            <Maximize2 size={16} />
           </button>
         </div>
       </div>

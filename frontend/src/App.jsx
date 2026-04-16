@@ -30,7 +30,6 @@ const App = () => {
     { id: 'shapes', icon: 'Square', label: 'Shapes', hasDropdown: true },
     { id: 'text', icon: 'Type', label: 'Text' },
     { id: 'sticky', icon: 'StickyNote', label: 'Sticky Note' },
-    { id: 'image', icon: 'Image', label: 'Image' },
   ];
 
   const handleToolChange = (toolId) => {
