@@ -3,11 +3,10 @@ import { motion } from 'framer-motion';
 import { 
   ZoomIn, 
   ZoomOut, 
-  Share2, 
   User
 } from 'lucide-react';
 
-const TopToolbar = ({ boardName, setBoardName, zoom, setZoom, onShare }) => {
+const TopToolbar = ({ boardName, setBoardName, zoom, setZoom }) => {
   const [isEditing, setIsEditing] = useState(false);
 
   const handleZoomIn = () => {
@@ -79,15 +78,6 @@ const TopToolbar = ({ boardName, setBoardName, zoom, setZoom, onShare }) => {
       </div>
 
       <div className="toolbar-right">
-        <button 
-          onClick={onShare}
-          className="share-btn"
-          title="Share board"
-        >
-          <Share2 size={18} />
-          <span>Share</span>
-        </button>
-        
         <div className="user-avatar" title="User profile">
           <User size={20} />
         </div>
