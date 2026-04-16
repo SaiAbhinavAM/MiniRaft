@@ -77,6 +77,7 @@ const App = () => {
             strokeWidth={strokeWidth}
             zoom={zoom}
             historyRef={historyRef}
+            activeFrame={activeFrame}
           />
         </div>
 
