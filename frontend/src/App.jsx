@@ -58,7 +58,6 @@ const App = () => {
         setBoardName={setBoardName}
         zoom={zoom}
         setZoom={setZoom}
-        onShare={() => console.log('Share clicked')}
         onUndo={() => historyRef.current?.undo()}
         onRedo={() => historyRef.current?.redo()}
       />
