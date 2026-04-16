@@ -7,7 +7,12 @@ module.exports = (io) => {
   router.post('/commit', (req, res) => {
     const { stroke } = req.body;
     if (stroke) {
-      io.emit('draw', stroke);
+      // Broadcast to frame-specific room if frameId is present, else global
+      if (stroke.frameId !== undefined) {
+        io.to(`frame-${stroke.frameId}`).emit('draw', stroke);
+      } else {
+        io.emit('draw', stroke);
+      }
       return res.status(200).json({ status: 'broadcasted' });
     }
     res.status(400).json({ error: 'Stroke data missing' });

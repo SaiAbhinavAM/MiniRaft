@@ -24,10 +24,21 @@ app.use('/', routes);
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
 
+  // ── Frame room management ─────────────────────────────────────────────
+  socket.on('join-frame', ({ frameId }) => {
+    // Leave all previous frame rooms
+    socket.rooms.forEach(room => {
+      if (room.startsWith('frame-')) socket.leave(room);
+    });
+    const room = `frame-${frameId}`;
+    socket.join(room);
+    console.log(`Client ${socket.id} joined ${room}`);
+  });
+
   socket.on('draw', async (stroke) => {
     try {
       const leaderUrl = leaderManager.getLeaderUrl();
-      // Forward client's stroke to current leader
+      // Forward client's stroke to current leader (includes frameId)
       await axios.post(`${leaderUrl}/append-log`, { stroke });
     } catch (error) {
       console.error('Error forwarding stroke to leader:', error.message);

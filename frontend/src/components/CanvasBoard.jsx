@@ -10,7 +10,7 @@ const createTextObject = (x, y, text = '', width = 200, height = 40) => ({
   fontSize: 16, color: '#000000', isEditing: false, isSelected: false,
 });
 
-const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom, historyRef }) => {
+const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom, historyRef, activeFrame }) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const contextRef = useRef(null);
@@ -28,15 +28,22 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom, historyRef })
   const [stickyNotes, setStickyNotes] = useState([]);
   const [selectedStickyId, setSelectedStickyId] = useState(null);
 
+  // ── Per-frame state store ────────────────────────────────────────────────
+  // Stores { canvasDataURL, textObjects, stickyNotes, undoStack, redoStack } per frame ID.
+  const frameDataRef = useRef({});
+  const prevFrameRef = useRef(activeFrame);
+
   const activeToolRef = useRef(activeTool);
   const strokeColorRef = useRef(strokeColor);
   const strokeWidthRef = useRef(strokeWidth);
   const zoomRef = useRef(zoom);
+  const activeFrameRef = useRef(activeFrame);
 
   useEffect(() => { activeToolRef.current = activeTool; }, [activeTool]);
   useEffect(() => { strokeColorRef.current = strokeColor; }, [strokeColor]);
   useEffect(() => { strokeWidthRef.current = strokeWidth; }, [strokeWidth]);
   useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+  useEffect(() => { activeFrameRef.current = activeFrame; }, [activeFrame]);
 
   // ─── History ───────────────────────────────────────────────────────────────
 
@@ -170,6 +177,19 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom, historyRef })
 
   // ─── Init ──────────────────────────────────────────────────────────────────
 
+  const clearCanvas = useCallback(() => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+    const rect = container.getBoundingClientRect();
+    const ctx = contextRef.current;
+    if (ctx) {
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      applyGridBackground(ctx, rect.width, rect.height);
+    }
+    canvasDataRef.current = null;
+  }, [applyGridBackground]);
+
   const initCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
@@ -201,10 +221,68 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom, historyRef })
     }
   }, [zoom, strokeColor, strokeWidth]);
 
+  // ─── Frame switch: save / restore per-frame state ─────────────────────────
+
+  useEffect(() => {
+    const oldFrame = prevFrameRef.current;
+    const newFrame = activeFrame;
+
+    if (oldFrame === newFrame) return;
+
+    // --- Save current frame ---
+    const canvas = canvasRef.current;
+    frameDataRef.current[oldFrame] = {
+      canvasDataURL: canvas && canvas.width > 0 ? canvas.toDataURL() : null,
+      textObjects: [...(textObjects || [])],
+      stickyNotes: [...(stickyNotes || [])],
+      undoStack: [...undoStack.current],
+      redoStack: [...redoStack.current],
+    };
+
+    // --- Restore new frame ---
+    const saved = frameDataRef.current[newFrame];
+
+    // Clear canvas to fresh grid
+    clearCanvas();
+
+    if (saved) {
+      // Restore canvas drawing
+      if (saved.canvasDataURL) {
+        restoreFromDataURL(saved.canvasDataURL);
+      }
+      setTextObjects(saved.textObjects || []);
+      setStickyNotes(saved.stickyNotes || []);
+      undoStack.current = saved.undoStack || [];
+      redoStack.current = saved.redoStack || [];
+    } else {
+      setTextObjects([]);
+      setStickyNotes([]);
+      undoStack.current = [];
+      redoStack.current = [];
+    }
+
+    setSelectedTextId(null);
+    setSelectedStickyId(null);
+
+    // --- Socket room: join new frame ---
+    socket.emit('join-frame', { frameId: newFrame });
+
+    prevFrameRef.current = newFrame;
+  }, [activeFrame]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Join initial frame room on mount
+  useEffect(() => {
+    socket.emit('join-frame', { frameId: activeFrame });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ─── Socket ────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     const handleDraw = (data) => {
+      // Only apply events that match the current active frame
+      if (data.frameId !== undefined && data.frameId !== activeFrameRef.current) return;
+
       if (data.type === 'stroke') {
         const s = data.data;
         drawOnCanvas(s.x1, s.y1, s.x2, s.y2, s.color, s.width);
@@ -253,7 +331,7 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom, historyRef })
     const obj = createTextObject(x, y);
     setTextObjects(prev => [...prev, obj]);
     setSelectedTextId(obj.id);
-    socket.emit('draw', { type: 'text', textObj: obj });
+    socket.emit('draw', { type: 'text', textObj: obj, frameId: activeFrameRef.current });
   }, []);
 
   const updateTextObject = useCallback((id, updates) => {
@@ -273,18 +351,18 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom, historyRef })
     };
     setStickyNotes(prev => [...prev, note]);
     setSelectedStickyId(note.id);
-    socket.emit('draw', { type: 'sticky-add', note });
+    socket.emit('draw', { type: 'sticky-add', note, frameId: activeFrameRef.current });
   }, []);
 
   const updateStickyNote = useCallback((id, updates) => {
     setStickyNotes(prev => prev.map(n => n.id === id ? { ...n, ...updates } : n));
-    socket.emit('draw', { type: 'sticky-update', id, updates });
+    socket.emit('draw', { type: 'sticky-update', id, updates, frameId: activeFrameRef.current });
   }, []);
 
   const deleteStickyNote = useCallback((id) => {
     setStickyNotes(prev => prev.filter(n => n.id !== id));
     if (selectedStickyId === id) setSelectedStickyId(null);
-    socket.emit('draw', { type: 'sticky-delete', id });
+    socket.emit('draw', { type: 'sticky-delete', id, frameId: activeFrameRef.current });
   }, [selectedStickyId]);
 
   const addStickyFromButton = useCallback(() => {
@@ -324,7 +402,7 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom, historyRef })
     const color = tool === 'eraser' ? '#FFFFFF' : strokeColorRef.current;
     const width = tool === 'eraser' ? strokeWidthRef.current * 3 : strokeWidthRef.current;
     drawOnCanvas(lastPos.current.x, lastPos.current.y, pos.x, pos.y, color, width);
-    socket.emit('draw', { type: 'stroke', data: { x1: lastPos.current.x, y1: lastPos.current.y, x2: pos.x, y2: pos.y, color, width } });
+    socket.emit('draw', { type: 'stroke', data: { x1: lastPos.current.x, y1: lastPos.current.y, x2: pos.x, y2: pos.y, color, width }, frameId: activeFrameRef.current });
     lastPos.current = pos;
   }, [isDrawing, getMousePos, drawOnCanvas]);
 
@@ -336,7 +414,7 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom, historyRef })
       const end = getMousePos(e);
       const start = shapeStartPos.current;
       drawShape(start.x, start.y, end.x, end.y, tool, strokeColorRef.current, strokeWidthRef.current);
-      socket.emit('draw', { type: 'shape', shapeType: tool, startX: start.x, startY: start.y, endX: end.x, endY: end.y, color: strokeColorRef.current, width: strokeWidthRef.current });
+      socket.emit('draw', { type: 'shape', shapeType: tool, startX: start.x, startY: start.y, endX: end.x, endY: end.y, color: strokeColorRef.current, width: strokeWidthRef.current, frameId: activeFrameRef.current });
     }
     shapeStartPos.current = null;
     saveCanvasData();
