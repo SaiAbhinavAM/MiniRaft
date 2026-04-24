@@ -4,6 +4,7 @@ import SideToolbar from './components/SideToolbar';
 import CanvasBoard from './components/CanvasBoard';
 import FrameCarousel from './components/FrameCarousel';
 import RightPanel from './components/RightPanel';
+import ClusterDashboard from './components/ClusterDashboard';
 import './styles/global.css';
 
 const App = () => {
@@ -16,6 +17,7 @@ const App = () => {
   ]);
   const [activeFrame, setActiveFrame] = useState(1);
   const [showRightPanel, setShowRightPanel] = useState(false);
+  const [showDashboard, setShowDashboard] = useState(false);
   const [strokeColor, setStrokeColor] = useState('#000000');
   const [strokeWidth, setStrokeWidth] = useState(2);
   const [zoom, setZoom] = useState(100);
@@ -58,6 +60,8 @@ const App = () => {
         setBoardName={setBoardName}
         zoom={zoom}
         setZoom={setZoom}
+        showDashboard={showDashboard}
+        setShowDashboard={setShowDashboard}
         onUndo={() => historyRef.current?.undo()}
         onRedo={() => historyRef.current?.redo()}
       />
@@ -89,6 +93,10 @@ const App = () => {
             setStrokeWidth={setStrokeWidth}
             onClose={() => setShowRightPanel(false)}
           />
+        )}
+
+        {showDashboard && (
+          <ClusterDashboard />
         )}
       </div>
 

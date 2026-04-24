@@ -14,6 +14,7 @@ class Raft {
       : ['http://localhost:3001', 'http://localhost:3002', 'http://localhost:3003'])
       .filter(url => !url.includes(`:${3000 + parseInt(this.id)}`));
     this.nextIndex = {};
+    this.blockedReplicas = new Set(); // For network partition simulation
   }
 
   init() {
@@ -28,20 +29,25 @@ class Raft {
     console.log(`Starting election for term ${this.term}`);
     this.election.clearHeartbeat();
 
+    const totalReplicas = this.replicas.length + 1;
+    const majority = Math.ceil(totalReplicas / 2);
+
     let votes = 1; // vote for self
-    const votePromises = this.replicas.map(url =>
-      axios.post(`${url}/request-vote`, {
-        term: this.term,
-        candidateId: this.id,
-        lastLogIndex: logManager.getLastLogIndex(),
-        lastLogTerm: logManager.getLastLogTerm()
-      }).catch(() => ({ data: { voteGranted: false } }))
-    );
+    const votePromises = this.replicas
+      .filter(url => !this.isBlocked(url))
+      .map(url =>
+        axios.post(`${url}/request-vote`, {
+          term: this.term,
+          candidateId: this.id,
+          lastLogIndex: logManager.getLastLogIndex(),
+          lastLogTerm: logManager.getLastLogTerm()
+        }).catch(() => ({ data: { voteGranted: false } }))
+      );
 
     const results = await Promise.all(votePromises);
     results.forEach(res => { if (res.data && res.data.voteGranted) votes++; });
 
-    if (votes >= 2 && this.state === 'CANDIDATE') {
+    if (votes >= majority && this.state === 'CANDIDATE') {
       this.becomeLeader();
     } else {
       this.state = 'FOLLOWER';
@@ -67,31 +73,36 @@ class Raft {
     const entry = logManager.getLog()[index];
     if (!entry) return false;
 
+    const totalReplicas = this.replicas.length + 1;
+    const majority = Math.ceil(totalReplicas / 2);
+
     let acks = 1; // leader counts itself
-    const promises = this.replicas.map(async (url) => {
-      try {
-        const ni = this.nextIndex[url] || 0;
-        const entries = logManager.getLog().slice(ni);
-        const res = await axios.post(`${url}/append-entries`, {
-          term: this.term,
-          leaderId: this.id,
-          prevLogIndex: ni - 1,
-          entries,
-          leaderCommit: logManager.commitIndex
-        });
-        if (res.data.success) {
-          this.nextIndex[url] = ni + entries.length;
-          acks++;
-        } else if (res.data.needSync) {
-          // Follower is behind — push missing entries via /sync-log
-          await this._syncFollower(url, res.data.followerLogLength || 0);
-        }
-      } catch (_) {}
-    });
+    const promises = this.replicas
+      .filter(url => !this.isBlocked(url))
+      .map(async (url) => {
+        try {
+          const ni = this.nextIndex[url] || 0;
+          const entries = logManager.getLog().slice(ni);
+          const res = await axios.post(`${url}/append-entries`, {
+            term: this.term,
+            leaderId: this.id,
+            prevLogIndex: ni - 1,
+            entries,
+            leaderCommit: logManager.commitIndex
+          });
+          if (res.data.success) {
+            this.nextIndex[url] = ni + entries.length;
+            acks++;
+          } else if (res.data.needSync) {
+            // Follower is behind — push missing entries via /sync-log
+            await this._syncFollower(url, res.data.followerLogLength || 0);
+          }
+        } catch (_) {}
+      });
 
     await Promise.all(promises);
 
-    if (acks >= 2) { // majority of 3
+    if (acks >= majority) {
       await logManager.commit(index);
       console.log(`Entry ${index} committed with ${acks} acks`);
       return true;
@@ -99,8 +110,29 @@ class Raft {
     return false;
   }
 
+  // Network partition simulation methods
+  blockReplica(url) {
+    this.blockedReplicas.add(url);
+    console.log(`Replica ${this.id} blocking communication with ${url}`);
+  }
+
+  unblockReplica(url) {
+    this.blockedReplicas.delete(url);
+    console.log(`Replica ${this.id} unblocking communication with ${url}`);
+  }
+
+  unblockAllReplicas() {
+    this.blockedReplicas.clear();
+    console.log(`Replica ${this.id} unblocking all replicas`);
+  }
+
+  isBlocked(url) {
+    return this.blockedReplicas.has(url);
+  }
+
   // Push all committed entries from `fromIndex` onward to a lagging follower
   async _syncFollower(url, fromIndex) {
+    if (this.isBlocked(url)) return;
     try {
       const entries = logManager.getLog().slice(fromIndex);
       if (entries.length === 0) return;
@@ -111,35 +143,37 @@ class Raft {
   }
 
   async sendHeartbeats() {
-    const promises = this.replicas.map(async (url) => {
-      const lastIndex = logManager.getLastLogIndex();
-      const ni = this.nextIndex[url] !== undefined ? this.nextIndex[url] : 0;
-      const entries = ni <= lastIndex ? logManager.getLog().slice(ni) : [];
+    const promises = this.replicas
+      .filter(url => !this.isBlocked(url))
+      .map(async (url) => {
+        const lastIndex = logManager.getLastLogIndex();
+        const ni = this.nextIndex[url] !== undefined ? this.nextIndex[url] : 0;
+        const entries = ni <= lastIndex ? logManager.getLog().slice(ni) : [];
 
-      try {
-        const res = await axios.post(`${url}/append-entries`, {
-          term: this.term,
-          leaderId: this.id,
-          prevLogIndex: ni - 1,
-          entries,
-          leaderCommit: logManager.commitIndex
-        });
+        try {
+          const res = await axios.post(`${url}/append-entries`, {
+            term: this.term,
+            leaderId: this.id,
+            prevLogIndex: ni - 1,
+            entries,
+            leaderCommit: logManager.commitIndex
+          });
 
-        if (res.data.success) {
-          this.nextIndex[url] = ni + entries.length;
-        } else if (res.data.term > this.term) {
-          this.term = res.data.term;
-          this.state = 'FOLLOWER';
-          this.election.clearHeartbeat();
-          this.election.resetElectionTimeout();
-        } else if (res.data.needSync) {
-          // Follower needs catch-up
-          await this._syncFollower(url, res.data.followerLogLength || 0);
-        } else {
-          this.nextIndex[url] = Math.max(0, ni - 1);
-        }
-      } catch (_) {}
-    });
+          if (res.data.success) {
+            this.nextIndex[url] = ni + entries.length;
+          } else if (res.data.term > this.term) {
+            this.term = res.data.term;
+            this.state = 'FOLLOWER';
+            this.election.clearHeartbeat();
+            this.election.resetElectionTimeout();
+          } else if (res.data.needSync) {
+            // Follower needs catch-up
+            await this._syncFollower(url, res.data.followerLogLength || 0);
+          } else {
+            this.nextIndex[url] = Math.max(0, ni - 1);
+          }
+        } catch (_) {}
+      });
     await Promise.all(promises);
   }
 
