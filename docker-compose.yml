@@ -3,7 +3,7 @@ services:
     build: ./gateway
     container_name: gateway
     environment:
-      - REPLICA_URLS=http://replica1:3001,http://replica2:3002,http://replica3:3003
+      - REPLICA_URLS=http://replica1:3001,http://replica2:3002,http://replica3:3003,http://replica4:3004
     ports:
       - "3000:3000"
     depends_on:
@@ -12,6 +12,8 @@ services:
       replica2:
         condition: service_healthy
       replica3:
+        condition: service_healthy
+      replica4:
         condition: service_healthy
     restart: on-failure
     networks:
@@ -23,7 +25,7 @@ services:
     environment:
       - REPLICA_ID=1
       - PORT=3001
-      - REPLICA_URLS=http://replica1:3001,http://replica2:3002,http://replica3:3003
+      - REPLICA_URLS=http://replica1:3001,http://replica2:3002,http://replica3:3003,http://replica4:3004
       - GATEWAY_URL=http://gateway:3000
       - MY_URL=http://replica1:3001
     ports:
@@ -46,7 +48,7 @@ services:
     environment:
       - REPLICA_ID=2
       - PORT=3002
-      - REPLICA_URLS=http://replica1:3001,http://replica2:3002,http://replica3:3003
+      - REPLICA_URLS=http://replica1:3001,http://replica2:3002,http://replica3:3003,http://replica4:3004
       - GATEWAY_URL=http://gateway:3000
       - MY_URL=http://replica2:3002
     ports:
@@ -69,7 +71,7 @@ services:
     environment:
       - REPLICA_ID=3
       - PORT=3003
-      - REPLICA_URLS=http://replica1:3001,http://replica2:3002,http://replica3:3003
+      - REPLICA_URLS=http://replica1:3001,http://replica2:3002,http://replica3:3003,http://replica4:3004
       - GATEWAY_URL=http://gateway:3000
       - MY_URL=http://replica3:3003
     ports:
@@ -86,11 +88,34 @@ services:
     networks:
       - drawing-network
 
+  replica4:
+    build: ./replica4
+    container_name: replica4
+    environment:
+      - REPLICA_ID=4
+      - PORT=3004
+      - REPLICA_URLS=http://replica1:3001,http://replica2:3002,http://replica3:3003,http://replica4:3004
+      - GATEWAY_URL=http://gateway:3000
+      - MY_URL=http://replica4:3004
+    ports:
+      - "3004:3004"
+    volumes:
+      - ./replica4:/app
+      - /app/node_modules
+    restart: on-failure
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3004/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - drawing-network
+
   frontend:
     build: ./frontend
     container_name: frontend
     environment:
-      - REACT_APP_GATEWAY_URL=http://172.22.246.81:3000
+      - REACT_APP_GATEWAY_URL=http://10.165.47.81:3000
     ports:
       - "8080:3000"
     depends_on:

@@ -268,12 +268,11 @@ const CanvasBoard = ({ activeTool, strokeColor, strokeWidth, zoom, historyRef, a
     socket.emit('join-frame', { frameId: newFrame });
 
     prevFrameRef.current = newFrame;
-  }, [activeFrame]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeFrame]);
 
   // Join initial frame room on mount
   useEffect(() => {
     socket.emit('join-frame', { frameId: activeFrame });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ─── Socket ────────────────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const leaderManager = require('./leaderManager');
+const axios = require('axios');
 
 module.exports = (io) => {
   // Replicas call this to broadcast committed strokes
@@ -28,6 +29,23 @@ module.exports = (io) => {
   // Client status check to find current leader
   router.get('/status', (req, res) => {
     res.json({ leader: leaderManager.getLeaderUrl() });
+  });
+
+  // Get all replicas' statuses for dashboard
+  router.get('/cluster-status', async (req, res) => {
+    const replicaStatuses = [];
+    for (const url of leaderManager.replicas) {
+      try {
+        const response = await axios.get(`${url}/status`, { timeout: 1000 });
+        replicaStatuses.push({ ...response.data, url, healthy: true });
+      } catch (err) {
+        replicaStatuses.push({ url, healthy: false, error: err.message });
+      }
+    }
+    res.json({ 
+      leader: leaderManager.getLeaderUrl(), 
+      replicas: replicaStatuses 
+    });
   });
 
   return router;

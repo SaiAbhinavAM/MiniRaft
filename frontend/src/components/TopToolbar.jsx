@@ -3,10 +3,11 @@ import { motion } from 'framer-motion';
 import { 
   ZoomIn, 
   ZoomOut, 
-  User
+  User,
+  Server
 } from 'lucide-react';
 
-const TopToolbar = ({ boardName, setBoardName, zoom, setZoom }) => {
+const TopToolbar = ({ boardName, setBoardName, zoom, setZoom, showDashboard, setShowDashboard, onUndo, onRedo }) => {
   const [isEditing, setIsEditing] = useState(false);
 
   const handleZoomIn = () => {
@@ -78,6 +79,27 @@ const TopToolbar = ({ boardName, setBoardName, zoom, setZoom }) => {
       </div>
 
       <div className="toolbar-right">
+        <button 
+          onClick={onUndo} 
+          className="action-btn"
+          title="Undo (Ctrl+Z)"
+        >
+          ↩️
+        </button>
+        <button 
+          onClick={onRedo} 
+          className="action-btn"
+          title="Redo (Ctrl+Y)"
+        >
+          ↪️
+        </button>
+        <button 
+          onClick={() => setShowDashboard(!showDashboard)} 
+          className={`action-btn ${showDashboard ? 'active' : ''}`}
+          title="Cluster Dashboard"
+        >
+          <Server size={18} />
+        </button>
         <div className="user-avatar" title="User profile">
           <User size={20} />
         </div>

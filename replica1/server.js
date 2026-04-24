@@ -91,6 +91,38 @@ app.get('/sync-log', (req, res) => {
   res.json({ log: log.slice(from), fromIndex: from });
 });
 
+// ─── Network Partition Simulation Endpoints ──────────────────────────────────
+app.post('/partition/block', (req, res) => {
+  const { url } = req.body;
+  if (url) {
+    raft.blockReplica(url);
+    res.json({ status: 'blocked', url });
+  } else {
+    res.status(400).json({ error: 'url required' });
+  }
+});
+
+app.post('/partition/unblock', (req, res) => {
+  const { url } = req.body;
+  if (url) {
+    raft.unblockReplica(url);
+    res.json({ status: 'unblocked', url });
+  } else {
+    res.status(400).json({ error: 'url required' });
+  }
+});
+
+app.post('/partition/unblock-all', (req, res) => {
+  raft.unblockAllReplicas();
+  res.json({ status: 'unblocked all' });
+});
+
+app.get('/partition/status', (req, res) => {
+  res.json({
+    blocked: Array.from(raft.blockedReplicas)
+  });
+});
+
 // ─── Start ────────────────────────────────────────────────────────────────────
 app.listen(REPLICA_PORT, () => {
   console.log(`Replica ${REPLICA_ID} running on port ${REPLICA_PORT}`);
